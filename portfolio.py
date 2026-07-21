@@ -151,47 +151,44 @@ class Portfolio:
         return True
 
 
-    def sell_all(self, date, price):
-        """
-        全株売却
-        """
+def sell_all(self, date, price):
+    """
+    全株売却
+    """
 
-        if not self.has_position:
-            return 0.0
+    if not self.has_position:
+        return 0.0
 
-        proceeds = self.total_shares * price
+    proceeds = self.total_shares * price
+    profit = proceeds - self.total_cost
 
-        profit = proceeds - self.total_cost
+    # 現金を戻す
+    self.cash += proceeds
 
-        # 現金回復
-        self.cash += proceeds
+    # 累計利益
+    self.total_profit += profit
 
-        self.total_profit += profit
-
-        self.trade_history.append(
-
-            TradeRecord(
-
-                date=date,
-
-                action="SELL",
-
-                price=price,
-
-                shares=self.total_shares,
-
-                average_price=self.average_price,
-
-                total_shares=self.total_shares,
-
-                profit=profit
-
-            )
-
+    # 売買履歴
+    self.trade_history.append(
+        TradeRecord(
+            date=date,
+            action="SELL",
+            price=price,
+            shares=self.total_shares,
+            average_price=self.average_price,
+            total_shares=self.total_shares,
+            profit=profit,
         )
+    )
 
-        self.reset()
+    # 保有情報だけ初期化
+    self.has_position = False
+    self.total_shares = 0
+    self.total_cost = 0.0
+    self.average_price = 0.0
+    self.last_buy_price = 0.0
+    self.next_buy_price = 0.0
+    self.target_price = 0.0
+    self.buy_count = 0
 
-        self.cash += self.total_profit
-
-        return profit
+    return profit  
