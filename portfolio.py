@@ -92,3 +92,106 @@ class Portfolio:
             f"Shares={self.total_shares}, "
             f"Avg={self.average_price:.2f}"
         )
+    def buy(self, date, price):
+        """
+        株を100株購入する
+        """
+
+        shares = self.config.INITIAL_SHARES
+
+        cost = shares * price
+
+        if self.cash < cost:
+            return False
+
+        # 現金減少
+        self.cash -= cost
+
+        # 保有情報更新
+        self.total_cost += cost
+        self.total_shares += shares
+
+        self.average_price = self.total_cost / self.total_shares
+
+        self.last_buy_price = price
+
+        self.next_buy_price = (
+            price * (1 - self.config.AVERAGING_RATE)
+        )
+
+        self.target_price = (
+            self.average_price
+            * (1 + self.config.PROFIT_TARGET)
+        )
+
+        self.buy_count += 1
+
+        self.has_position = True
+
+        self.trade_history.append(
+
+            TradeRecord(
+
+                date=date,
+
+                action="BUY",
+
+                price=price,
+
+                shares=shares,
+
+                average_price=self.average_price,
+
+                total_shares=self.total_shares
+
+            )
+
+        )
+
+        return True
+
+
+    def sell_all(self, date, price):
+        """
+        全株売却
+        """
+
+        if not self.has_position:
+            return 0.0
+
+        proceeds = self.total_shares * price
+
+        profit = proceeds - self.total_cost
+
+        # 現金回復
+        self.cash += proceeds
+
+        self.total_profit += profit
+
+        self.trade_history.append(
+
+            TradeRecord(
+
+                date=date,
+
+                action="SELL",
+
+                price=price,
+
+                shares=self.total_shares,
+
+                average_price=self.average_price,
+
+                total_shares=self.total_shares,
+
+                profit=profit
+
+            )
+
+        )
+
+        self.reset()
+
+        self.cash += self.total_profit
+
+        return profit
