@@ -74,3 +74,21 @@ class TradeEngine:
             print(df.head())
 
         return df
+    def run(self):
+        """
+        バックテスト実行
+        """
+
+        if self.df is None:
+            self.load_csv()
+
+        for _, row in self.df.iterrows():
+
+            date = row["日付"]
+            close = row["終値"]
+
+            if self.config.DEBUG:
+                print(
+                    f"{date.strftime('%Y-%m-%d')} "
+                    f"終値={close}"
+                )
