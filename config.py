@@ -36,7 +36,7 @@ class Config:
     # ファイル
     # ============================
 
-    CSV_FILE = "sample_data/7201.csv"
+    CSV_FILE = "7201.csv"
 
     OUTPUT_DIR = "output"
 
