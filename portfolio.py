@@ -192,3 +192,37 @@ def sell_all(self, date, price):
     self.buy_count = 0
 
     return profit  
+    def can_buy(self) -> bool:
+        """
+        追加購入できるか判定
+        """
+        if self.buy_count >= self.config.MAX_BUY_COUNT:
+            return False
+
+        return self.cash >= (
+            self.config.INITIAL_SHARES * self.last_buy_price
+        )
+
+    def should_average_down(self, current_price: float) -> bool:
+        """
+        ナンピン条件判定
+        """
+        if not self.has_position:
+            return False
+
+        return current_price <= self.next_buy_price
+
+    def should_take_profit(self, current_price: float) -> bool:
+        """
+        利確条件判定
+        """
+        if not self.has_position:
+            return False
+
+        return current_price >= self.target_price
+
+    def position_value(self, current_price: float) -> float:
+        """
+        保有株評価額
+        """
+        return self.total_shares * current_price
