@@ -226,3 +226,26 @@ def sell_all(self, date, price):
         保有株評価額
         """
         return self.total_shares * current_price
+    def has_stock(self) -> bool:
+        """
+        株式を保有しているか
+        """
+        return self.has_position
+
+    def get_average_price(self) -> float:
+        """
+        平均取得単価
+        """
+        return self.average_price
+
+    def get_buy_count(self) -> int:
+        """
+        購入回数
+        """
+        return self.buy_count
+
+    def get_next_buy_price(self) -> float:
+        """
+        次回ナンピン価格
+        """
+        return self.next_buy_price
