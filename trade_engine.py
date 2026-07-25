@@ -36,9 +36,12 @@ class TradeEngine:
             raise FileNotFoundError(
                 f"CSVファイルが見つかりません：{csv_path}"
             )
-
-        df = pd.read_csv(csv_path)
-
+try:
+    df = pd.read_csv(csv_path, encoding="utf-8")
+except UnicodeDecodeError:
+    df = pd.read_csv(csv_path, encoding="cp932")
+       
+        
         # 必須列チェック
         for col in self.REQUIRED_COLUMNS:
             if col not in df.columns:
