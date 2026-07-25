@@ -74,21 +74,27 @@ class TradeEngine:
             print(df.head())
 
         return df
-    def run(self):
-        """
-        バックテスト実行
-        """
+  
+def run(self):
+    """
+    バックテスト実行
+    """
 
-        if self.df is None:
-            self.load_csv()
+    if self.df is None:
+        self.load_csv()
 
-        for _, row in self.df.iterrows():
+    for _, row in self.df.iterrows():
 
-            date = row["日付"]
-            close = row["終値"]
+        date = row["日付"].strftime("%Y-%m-%d")
+        close = float(row["終値"])
+
+        # 初回購入
+        if not self.portfolio.has_stock():
+
+            success = self.portfolio.buy(date, close)
 
             if self.config.DEBUG:
-                print(
-                    f"{date.strftime('%Y-%m-%d')} "
-                    f"終値={close}"
-                )
+                if success:
+                    print(f"{date} 初回購入 {close:.1f}円")
+                else:
+                    print(f"{date} 購入失敗")
