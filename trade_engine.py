@@ -5,25 +5,7 @@ Version : 1.0.0 Final
 
 trade_engine.py
 
-日産自動車(7201)
-バックテストエンジン
-
-
-Trading Rule
-
-1. Positionなし
-   -> 始値で100株購入
-
-2. Averaging Down
-   -> 前回購入価格から6%下落
-   -> 条件価格で100株購入
-
-3. Profit Taking
-   -> 平均取得単価 +3%
-   -> 条件価格で全株売却
-
-4. Asset Evaluation
-   -> 終値評価
+バックテスト実行エンジン
 
 """
 
@@ -37,13 +19,18 @@ from dataclasses import dataclass
 from typing import List, Dict, Any
 
 
+from pathlib import Path
+
+
 import pandas as pd
+
 
 
 from config import Config
 
 
 from portfolio import Portfolio
+
 
 
 
@@ -57,6 +44,7 @@ class TradeRecord:
     """
     売買履歴
     """
+
 
     date: str
 
@@ -76,6 +64,7 @@ class TradeRecord:
 
 
 
+
 # =====================================================
 # Trade Engine
 # =====================================================
@@ -87,7 +76,9 @@ class TradeEngine:
     """
 
 
+
     def __init__(self):
+
 
         self.portfolio = Portfolio(
 
@@ -96,18 +87,16 @@ class TradeEngine:
         )
 
 
+
         self.trade_history: List[TradeRecord] = []
+
 
 
         self.asset_history: List[Dict[str, Any]] = []
 
 
+
         self.data: pd.DataFrame | None = None
-
-
-        # ナンピン回数管理
-
-        self.average_down_count = 0
 
 
 
@@ -119,30 +108,18 @@ class TradeEngine:
     def load_csv(self) -> None:
         """
         CSV読込
-
-        7201.csv対応
-
-        Encoding:
-        CP932
-
-        使用列:
-
-        日付
-        始値
-        高値
-        安値
-        終値
-
         """
+
 
 
         self.data = pd.read_csv(
 
             Config.CSV_FILE,
 
-            encoding="cp932"
+            encoding="utf-8-sig"
 
         )
+
 
 
         missing = [
@@ -156,13 +133,16 @@ class TradeEngine:
         ]
 
 
+
         if missing:
+
 
             raise ValueError(
 
                 f"CSV必要列不足 : {missing}"
 
             )
+
 
 
         self.data = self.data[
@@ -179,11 +159,54 @@ class TradeEngine:
 
         ] = pd.to_datetime(
 
-            self.data[Config.DATE_COLUMN]
+            self.data[
+
+                Config.DATE_COLUMN
+
+            ]
 
         )
 
 
+
+        # 数値変換
+
+        numeric_columns = [
+
+            Config.OPEN_COLUMN,
+
+            Config.CLOSE_COLUMN,
+
+            Config.HIGH_COLUMN,
+
+            Config.LOW_COLUMN
+
+        ]
+
+
+
+        for col in numeric_columns:
+
+
+            self.data[col] = pd.to_numeric(
+
+                self.data[col],
+
+                errors="coerce"
+
+            )
+
+
+
+        self.data.dropna(
+
+            inplace=True
+
+        )
+
+
+
+        # 古い日付順
 
         self.data.sort_values(
 
@@ -192,6 +215,7 @@ class TradeEngine:
             inplace=True
 
         )
+
 
 
         self.data.reset_index(
@@ -211,40 +235,72 @@ class TradeEngine:
 
     def validate_data(self) -> None:
         """
-        CSVデータ検証
+        データ検証
         """
+
 
 
         if self.data is None:
 
-            raise RuntimeError(
 
-                "CSV未読込です"
+            raise ValueError(
+
+                "CSVが読み込まれていません"
 
             )
 
 
 
-        if len(self.data) == 0:
+        if self.data.empty:
+
 
             raise ValueError(
 
-                "CSVデータがありません"
+                "CSVデータが空です"
 
             )
 
 
 
-        if self.data.isnull().any().any():
+        required = [
+
+            Config.DATE_COLUMN,
+
+            Config.OPEN_COLUMN,
+
+            Config.CLOSE_COLUMN,
+
+            Config.HIGH_COLUMN,
+
+            Config.LOW_COLUMN
+
+        ]
+
+
+
+        missing = [
+
+            col
+
+            for col in required
+
+            if col not in self.data.columns
+
+        ]
+
+
+
+        if missing:
+
 
             raise ValueError(
 
-                "CSVに欠損値があります"
+                f"不足列 : {missing}"
 
             )
 
     # =================================================
-    # Trade History
+    # History
     # =================================================
 
 
@@ -257,7 +313,7 @@ class TradeEngine:
         realized_profit: float = 0.0
     ) -> None:
         """
-        売買履歴保存
+        売買履歴追加
         """
 
 
@@ -295,18 +351,13 @@ class TradeEngine:
 
 
 
-    # =================================================
-    # Asset History
-    # =================================================
-
-
     def add_asset_history(
         self,
         date,
         close_price: float
     ) -> None:
         """
-        終値による資産評価
+        資産推移追加
         """
 
 
@@ -317,16 +368,13 @@ class TradeEngine:
                 "Date":
                     str(date.date()),
 
-
                 "Cash":
                     self.portfolio.cash,
-
 
                 "MarketValue":
                     self.portfolio.market_value(
                         close_price
                     ),
-
 
                 "TotalAssets":
                     self.portfolio.total_assets(
@@ -340,20 +388,18 @@ class TradeEngine:
 
 
     # =================================================
-    # Initial Buy
+    # Trading
     # =================================================
 
 
-    def execute_initial_buy(
+    def execute_buy(
         self,
         date,
-        open_price: float
+        price: float,
+        action: str = "BUY"
     ) -> None:
         """
-        初回購入
-
-        ポジションなしの場合
-        始値で100株購入
+        買付実行
         """
 
 
@@ -362,7 +408,7 @@ class TradeEngine:
 
 
         if not self.portfolio.can_buy(
-            open_price,
+            price,
             shares
         ):
 
@@ -372,14 +418,11 @@ class TradeEngine:
 
         self.portfolio.buy(
 
-            open_price,
+            price,
 
             shares
 
         )
-
-
-        self.average_down_count = 0
 
 
 
@@ -387,97 +430,9 @@ class TradeEngine:
 
             date=date,
 
-            action="BUY",
+            action=action,
 
-            price=open_price,
-
-            shares=shares
-
-        )
-
-
-
-    # =================================================
-    # Averaging Down
-    # =================================================
-
-
-    def execute_average_down(
-        self,
-        date
-    ) -> None:
-        """
-        ナンピン購入
-
-        前回購入価格から6%下落
-
-        条件価格で購入
-        """
-
-
-        if self.average_down_count >= Config.MAX_AVERAGE_DOWN_COUNT:
-
-            return
-
-
-
-        last_price = (
-
-            self.portfolio.last_buy_price
-
-        )
-
-
-
-        buy_price = (
-
-            last_price
-
-            *
-
-            (1 - Config.AVERAGE_DOWN_RATE)
-
-        )
-
-
-
-        shares = Config.INITIAL_SHARES
-
-
-
-        if not self.portfolio.can_buy(
-
-            buy_price,
-
-            shares
-
-        ):
-
-            return
-
-
-
-        self.portfolio.buy(
-
-            buy_price,
-
-            shares
-
-        )
-
-
-
-        self.average_down_count += 1
-
-
-
-        self.add_trade_history(
-
-            date=date,
-
-            action="AVERAGE_DOWN",
-
-            price=buy_price,
+            price=price,
 
             shares=shares
 
@@ -485,34 +440,15 @@ class TradeEngine:
 
 
 
-    # =================================================
-    # Profit Sell
-    # =================================================
 
-
-    def execute_profit_sell(
+    def execute_sell(
         self,
-        date
+        date,
+        price: float
     ) -> None:
         """
-        利益確定
-
-        平均取得単価 +3%
-
-        条件価格で全株売却
+        全株売却
         """
-
-
-        sell_price = (
-
-            self.portfolio.average_price
-
-            *
-
-            (1 + Config.PROFIT_TARGET)
-
-        )
-
 
 
         shares = (
@@ -522,21 +458,21 @@ class TradeEngine:
         )
 
 
-
         if shares <= 0:
 
             return
 
 
 
-        profit = self.portfolio.sell_all(
+        realized_profit = (
 
-            sell_price
+            self.portfolio.sell_all(
+
+                price
+
+            )
 
         )
-
-
-        self.average_down_count = 0
 
 
 
@@ -546,71 +482,65 @@ class TradeEngine:
 
             action="SELL",
 
-            price=sell_price,
+            price=price,
 
             shares=shares,
 
-            realized_profit=profit
+            realized_profit=realized_profit
 
         )
 
 
 
     # =================================================
-    # Condition Check
+    # Entry Rule
     # =================================================
 
 
-    def check_average_down(
+    def check_initial_entry(
         self,
-        low_price: float
-    ) -> bool:
+        row
+    ) -> None:
         """
-        ナンピン判定
+        初回購入判定
 
-        安値で判定
+        ポジションなしの場合
+        始値購入
         """
 
 
-        if not self.portfolio.has_position():
 
-            return False
+        if self.portfolio.has_position():
 
-
-
-        if self.average_down_count >= Config.MAX_AVERAGE_DOWN_COUNT:
-
-            return False
+            return
 
 
 
-        limit_price = (
+        self.execute_buy(
 
-            self.portfolio.last_buy_price
+            date=row[Config.DATE_COLUMN],
 
-            *
+            price=row[Config.OPEN_COLUMN],
 
-            (1 - Config.AVERAGE_DOWN_RATE)
-
-        )
-
-
-        return (
-
-            low_price <= limit_price
+            action="BUY"
 
         )
 
 
 
-    def check_profit_target(
+    # =================================================
+    # Take Profit Rule
+    # =================================================
+
+
+    def check_take_profit(
         self,
-        high_price: float
+        row
     ) -> bool:
         """
-        利益確定判定
+        利確判定
 
-        高値で判定
+        高値が平均簿価+3%以上
         """
 
 
@@ -626,16 +556,107 @@ class TradeEngine:
 
             *
 
-            (1 + Config.PROFIT_TARGET)
+            (
+
+                1
+
+                +
+
+                Config.PROFIT_TARGET
+
+            )
 
         )
 
 
-        return (
 
-            high_price >= target_price
+        if row[Config.HIGH_COLUMN] >= target_price:
+
+
+            self.execute_sell(
+
+                date=row[Config.DATE_COLUMN],
+
+                price=target_price
+
+            )
+
+
+            return True
+
+
+
+        return False
+
+
+
+    # =================================================
+    # Averaging Down Rule
+    # =================================================
+
+
+    def check_average_down(
+        self,
+        row
+    ) -> bool:
+        """
+        ナンピン判定
+
+        直前購入価格から6%下落
+        """
+
+
+        if not self.portfolio.has_position():
+
+            return False
+
+
+
+        if self.portfolio.buy_count >= Config.MAX_BUY_COUNT:
+
+            return False
+
+
+
+        target_price = (
+
+            self.portfolio.last_buy_price
+
+            *
+
+            (
+
+                1
+
+                -
+
+                Config.AVERAGING_RATE
+
+            )
 
         )
+
+
+
+        if row[Config.LOW_COLUMN] <= target_price:
+
+
+            self.execute_buy(
+
+                date=row[Config.DATE_COLUMN],
+
+                price=target_price,
+
+                action="AVERAGE_DOWN"
+
+            )
+
+
+            return True
+
+
+
+        return False
 
     # =================================================
     # Backtest Run
@@ -645,24 +666,13 @@ class TradeEngine:
     def run(self) -> None:
         """
         バックテスト実行
-
-
-        1日の処理順:
-
-        ① 始値購入
-        ② ナンピン（安値）
-        ③ 利益確定（高値）
-        ④ 終値評価
-
         """
 
 
         if self.data is None:
 
-            raise RuntimeError(
-
-                "CSV未読込です"
-
+            raise ValueError(
+                "CSVデータがありません"
             )
 
 
@@ -670,135 +680,75 @@ class TradeEngine:
         for _, row in self.data.iterrows():
 
 
-            date = row[
-
-                Config.DATE_COLUMN
-
-            ]
+            date = row[Config.DATE_COLUMN]
 
 
-            open_price = float(
+            # -----------------------------------------
+            # 保有中
+            # -----------------------------------------
 
-                row[
-
-                    Config.OPEN_COLUMN
-
-                ]
-
-            )
+            if self.portfolio.has_position():
 
 
-            high_price = float(
+                # ① 利確確認
 
-                row[
-
-                    Config.HIGH_COLUMN
-
-                ]
-
-            )
-
-
-            low_price = float(
-
-                row[
-
-                    Config.LOW_COLUMN
-
-                ]
-
-            )
-
-
-            close_price = float(
-
-                row[
-
-                    Config.CLOSE_COLUMN
-
-                ]
-
-            )
-
-
-
-            # ---------------------------------
-            # ① Position Check
-            # ---------------------------------
-
-
-            if not self.portfolio.has_position():
-
-
-                self.execute_initial_buy(
-
-                    date,
-
-                    open_price
-
+                sold = self.check_take_profit(
+                    row
                 )
 
+
+                if sold:
+
+                    self.add_asset_history(
+
+                        date,
+
+                        row[Config.CLOSE_COLUMN]
+
+                    )
+
+                    continue
+
+
+
+                # ② ナンピン確認
+
+                self.check_average_down(
+                    row
+                )
+
+
+
+            # -----------------------------------------
+            # ポジションなし
+            # -----------------------------------------
 
             else:
 
 
-                # ---------------------------------
-                # ② Averaging Down
-                # ---------------------------------
-
-
-                if self.check_average_down(
-
-                    low_price
-
-                ):
-
-
-                    self.execute_average_down(
-
-                        date
-
-                    )
+                self.check_initial_entry(
+                    row
+                )
 
 
 
-                # ---------------------------------
-                # ③ Profit Taking
-                # ---------------------------------
-
-
-                if self.check_profit_target(
-
-                    high_price
-
-                ):
-
-
-                    self.execute_profit_sell(
-
-                        date
-
-                    )
-
-
-
-            # ---------------------------------
-            # ④ Asset Evaluation
-            # ---------------------------------
+            # -----------------------------------------
+            # 日次資産記録
+            # -----------------------------------------
 
 
             self.add_asset_history(
 
                 date,
 
-                close_price
+                row[Config.CLOSE_COLUMN]
 
             )
 
 
 
     # =================================================
-    # Data Output
+    # DataFrame Convert
     # =================================================
 
 
@@ -822,9 +772,7 @@ class TradeEngine:
 
                 record.__dict__
 
-                for record
-
-                in self.trade_history
+                for record in self.trade_history
 
             ]
 
@@ -836,8 +784,14 @@ class TradeEngine:
         self
     ) -> pd.DataFrame:
         """
-        資産推移DataFrame
+        資産履歴DataFrame
         """
+
+
+        if not self.asset_history:
+
+            return pd.DataFrame()
+
 
 
         return pd.DataFrame(
@@ -845,86 +799,3 @@ class TradeEngine:
             self.asset_history
 
         )
-
-
-
-    # =================================================
-    # Summary
-    # =================================================
-
-
-    def summary(self) -> dict:
-        """
-        バックテスト概要
-        """
-
-
-        final_assets = Config.INITIAL_CASH
-
-
-
-        if self.asset_history:
-
-
-            final_assets = (
-
-                self.asset_history[-1]
-
-                [
-
-                    "TotalAssets"
-
-                ]
-
-            )
-
-
-
-        return {
-
-
-            "Initial Assets":
-
-                Config.INITIAL_CASH,
-
-
-            "Final Assets":
-
-                final_assets,
-
-
-            "Total Profit":
-
-                final_assets
-
-                -
-
-                Config.INITIAL_CASH,
-
-
-            "Return Rate":
-
-                (
-
-                    final_assets
-
-                    /
-
-                    Config.INITIAL_CASH
-
-                    -
-
-                    1
-
-                ),
-
-
-            "Trade Count":
-
-                len(
-
-                    self.trade_history
-
-                )
-
-        }
