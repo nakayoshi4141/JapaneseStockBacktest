@@ -3,48 +3,26 @@ Japanese Stock Backtest
 Version 1.0.0
 
 portfolio.py
-ポートフォリオ管理クラス
+
+ポートフォリオ管理
 """
 
-from dataclasses import dataclass, field
-from typing import List, Dict
+from __future__ import annotations
+
+from dataclasses import dataclass
 
 
 @dataclass
-class TradeRecord:
-    """売買履歴"""
-
-    date: str
-    action: str
-    price: float
-    shares: int
-    average_price: float
-    total_shares: int
-    profit: float = 0.0
-
-
 class Portfolio:
     """
-    保有株管理
-
-    売買判断は trade_engine.py が行う。
-    Portfolio は保有状態のみ管理する。
+    保有資産管理クラス
     """
 
-    def __init__(self, config):
+    initial_cash: float
 
-        self.config = config
+    def __post_init__(self):
 
-        self.reset()
-
-    def reset(self):
-        """初期状態"""
-
-        # 現金
-        self.cash = self.config.INITIAL_CASH
-
-        # 保有状態
-        self.has_position = False
+        self.cash = float(self.initial_cash)
 
         self.total_shares = 0
 
@@ -52,200 +30,227 @@ class Portfolio:
 
         self.average_price = 0.0
 
-        self.last_buy_price = 0.0
-
-        self.next_buy_price = 0.0
-
-        self.target_price = 0.0
+        self.last_buy_price = None
 
         self.buy_count = 0
 
-        # 累計利益
-        self.total_profit = 0.0
-
-        # 売買履歴
-        self.trade_history: List[TradeRecord] = []
+    # =====================================================
+    # Position
+    # =====================================================
 
     @property
-    def market_value(self):
-
-        if not self.has_position:
-            return 0.0
-
-        return self.total_shares * self.average_price
-
-    def unrealized_profit(self, current_price):
-
-        if not self.has_position:
-            return 0.0
-
-        return (current_price - self.average_price) * self.total_shares
-
-    def current_assets(self, current_price):
-
-        return self.cash + self.total_shares * current_price
-
-    def __str__(self):
-
-        return (
-            f"Cash={self.cash:,.0f}, "
-            f"Shares={self.total_shares}, "
-            f"Avg={self.average_price:.2f}"
-        )
-    def buy(self, date, price):
+    def has_position(self) -> bool:
         """
-        株を100株購入する
+        保有中かどうか
+        """
+        return self.total_shares > 0
+
+    # =====================================================
+    # Buy
+    # =====================================================
+
+    def can_buy(
+        self,
+        price: float,
+        shares: int
+    ) -> bool:
+        """
+        購入可能か判定
         """
 
-        shares = self.config.INITIAL_SHARES
+        required_cash = price * shares
 
-        cost = shares * price
+        return self.cash >= required_cash
 
-        if self.cash < cost:
-            return False
+    def buy(
+        self,
+        price: float,
+        shares: int
+    ) -> None:
+        """
+        株を購入する
+        """
 
-        # 現金減少
+        cost = price * shares
+
+        if cost > self.cash:
+            raise ValueError("Cash不足")
+
         self.cash -= cost
 
-        # 保有情報更新
         self.total_cost += cost
+
         self.total_shares += shares
 
-        self.average_price = self.total_cost / self.total_shares
+        self.average_price = (
+            self.total_cost
+            / self.total_shares
+        )
 
         self.last_buy_price = price
 
-        self.next_buy_price = (
-            price * (1 - self.config.AVERAGING_RATE)
-        )
-
-        self.target_price = (
-            self.average_price
-            * (1 + self.config.PROFIT_TARGET)
-        )
-
         self.buy_count += 1
 
-        self.has_position = True
+    # =====================================================
+    # Average Down
+    # =====================================================
 
-        self.trade_history.append(
-
-            TradeRecord(
-
-                date=date,
-
-                action="BUY",
-
-                price=price,
-
-                shares=shares,
-
-                average_price=self.average_price,
-
-                total_shares=self.total_shares
-
-            )
-
-        )
-
-        return True
-
-
-def sell_all(self, date, price):
-    """
-    全株売却
-    """
-
-    if not self.has_position:
-        return 0.0
-
-    proceeds = self.total_shares * price
-    profit = proceeds - self.total_cost
-
-    # 現金を戻す
-    self.cash += proceeds
-
-    # 累計利益
-    self.total_profit += profit
-
-    # 売買履歴
-    self.trade_history.append(
-        TradeRecord(
-            date=date,
-            action="SELL",
-            price=price,
-            shares=self.total_shares,
-            average_price=self.average_price,
-            total_shares=self.total_shares,
-            profit=profit,
-        )
-    )
-
-    # 保有情報だけ初期化
-    self.has_position = False
-    self.total_shares = 0
-    self.total_cost = 0.0
-    self.average_price = 0.0
-    self.last_buy_price = 0.0
-    self.next_buy_price = 0.0
-    self.target_price = 0.0
-    self.buy_count = 0
-
-    return profit  
-    def can_buy(self) -> bool:
+    def should_average_down(
+        self,
+        current_price: float,
+        rate: float
+    ) -> bool:
         """
-        追加購入できるか判定
+        ナンピン判定
         """
-        if self.buy_count >= self.config.MAX_BUY_COUNT:
-            return False
 
-        return self.cash >= (
-            self.config.INITIAL_SHARES * self.last_buy_price
-        )
-
-    def should_average_down(self, current_price: float) -> bool:
-        """
-        ナンピン条件判定
-        """
         if not self.has_position:
             return False
 
-        return current_price <= self.next_buy_price
+        if self.last_buy_price is None:
+            return False
 
-    def should_take_profit(self, current_price: float) -> bool:
+        target = self.last_buy_price * (1.0 - rate)
+
+        return current_price <= target
+        # =====================================================
+    # Take Profit
+    # =====================================================
+
+    def should_take_profit(
+        self,
+        current_price: float,
+        profit_rate: float
+    ) -> bool:
         """
-        利確条件判定
+        利益確定判定
+
+        Parameters
+        ----------
+        current_price : float
+            現在価格
+
+        profit_rate : float
+            利益確定率（例：0.03）
+
+        Returns
+        -------
+        bool
+            利確条件を満たせばTrue
         """
+
         if not self.has_position:
             return False
 
-        return current_price >= self.target_price
+        target_price = self.average_price * (1.0 + profit_rate)
 
-    def position_value(self, current_price: float) -> float:
+        return current_price >= target_price
+
+    # =====================================================
+    # Market Value
+    # =====================================================
+
+    def market_value(
+        self,
+        current_price: float
+    ) -> float:
         """
-        保有株評価額
+        保有株の評価額
         """
+
         return self.total_shares * current_price
-    def has_stock(self) -> bool:
-        """
-        株式を保有しているか
-        """
-        return self.has_position
 
-    def get_average_price(self) -> float:
+    def unrealized_profit(
+        self,
+        current_price: float
+    ) -> float:
         """
-        平均取得単価
+        評価損益
         """
-        return self.average_price
 
-    def get_buy_count(self) -> int:
-        """
-        購入回数
-        """
-        return self.buy_count
+        return self.market_value(current_price) - self.total_cost
 
-    def get_next_buy_price(self) -> float:
+    def total_assets(
+        self,
+        current_price: float
+    ) -> float:
         """
-        次回ナンピン価格
+        総資産
         """
-        return self.next_buy_price
+
+        return self.cash + self.market_value(current_price)
+
+    # =====================================================
+    # Sell
+    # =====================================================
+
+    def sell_all(
+        self,
+        price: float
+    ) -> float:
+        """
+        全株売却
+
+        Returns
+        -------
+        float
+            実現損益
+        """
+
+        if not self.has_position:
+            return 0.0
+
+        proceeds = self.total_shares * price
+
+        realized_profit = proceeds - self.total_cost
+
+        self.cash += proceeds
+
+        self.reset_position()
+
+        return realized_profit
+    # =====================================================
+    # Reset Position
+    # =====================================================
+
+    def reset_position(self) -> None:
+        """
+        保有ポジションを初期化する
+        """
+
+        self.total_shares = 0
+        self.total_cost = 0.0
+        self.average_price = 0.0
+        self.last_buy_price = None
+        self.buy_count = 0
+
+    # =====================================================
+    # Information
+    # =====================================================
+
+    def position_summary(self) -> dict:
+        """
+        現在のポジション情報を辞書形式で返す
+        """
+
+        return {
+            "cash": self.cash,
+            "shares": self.total_shares,
+            "total_cost": self.total_cost,
+            "average_price": self.average_price,
+            "last_buy_price": self.last_buy_price,
+            "buy_count": self.buy_count,
+        }
+
+    def __repr__(self) -> str:
+        """
+        デバッグ表示
+        """
+
+        return (
+            "Portfolio("
+            f"cash={self.cash:.2f}, "
+            f"shares={self.total_shares}, "
+            f"average_price={self.average_price:.2f}, "
+            f"buy_count={self.buy_count})"
+        )
