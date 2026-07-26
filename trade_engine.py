@@ -100,6 +100,7 @@ class TradeEngine:
 
 
 
+  
     # =================================================
     # CSV Load
     # =================================================
@@ -108,18 +109,45 @@ class TradeEngine:
     def load_csv(self) -> None:
         """
         CSV読込
+
+        UTF-8 / UTF-8-SIG / CP932対応
         """
 
+        encodings = [
+            "utf-8-sig",
+            "utf-8",
+            "cp932"
+        ]
 
 
-        self.data = pd.read_csv(
+        last_error = None
 
-            Config.CSV_FILE,
 
-            encoding="utf-8-sig"
+        for encoding in encodings:
 
-        )
+            try:
 
+                self.data = pd.read_csv(
+                    Config.CSV_FILE,
+                    encoding=encoding
+                )
+
+                break
+
+
+            except UnicodeDecodeError as e:
+
+                last_error = e
+
+        else:
+
+            raise last_error
+
+
+
+        # ---------------------------------------------
+        # 必須列確認
+        # ---------------------------------------------
 
 
         missing = [
@@ -133,43 +161,43 @@ class TradeEngine:
         ]
 
 
-
         if missing:
 
-
             raise ValueError(
-
                 f"CSV必要列不足 : {missing}"
-
             )
 
 
 
+        # 必要列のみ利用
+
         self.data = self.data[
-
             Config.REQUIRED_COLUMNS
-
         ].copy()
 
 
 
+        # ---------------------------------------------
+        # 日付変換
+        # ---------------------------------------------
+
+
         self.data[
-
             Config.DATE_COLUMN
-
         ] = pd.to_datetime(
 
             self.data[
-
                 Config.DATE_COLUMN
-
             ]
 
         )
 
 
 
+        # ---------------------------------------------
         # 数値変換
+        # ---------------------------------------------
+
 
         numeric_columns = [
 
@@ -184,9 +212,7 @@ class TradeEngine:
         ]
 
 
-
         for col in numeric_columns:
-
 
             self.data[col] = pd.to_numeric(
 
@@ -198,6 +224,8 @@ class TradeEngine:
 
 
 
+        # 欠損除去
+
         self.data.dropna(
 
             inplace=True
@@ -206,7 +234,10 @@ class TradeEngine:
 
 
 
-        # 古い日付順
+        # ---------------------------------------------
+        # 日付順へ変更
+        # ---------------------------------------------
+
 
         self.data.sort_values(
 
@@ -215,7 +246,6 @@ class TradeEngine:
             inplace=True
 
         )
-
 
 
         self.data.reset_index(
