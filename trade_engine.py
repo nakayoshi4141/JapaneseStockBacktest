@@ -1,28 +1,29 @@
 """
 Japanese Stock Backtest
 
-Version : 1.0.0 Release
+Version : 1.0.0 Final
 
 trade_engine.py
 
 日産自動車(7201)
 バックテストエンジン
 
-売買仕様:
 
-・ポジションなし
-    → 始値で100株購入
+Trading Rule
 
-・ナンピン
-    → 直前購入価格から6%下落
-    → 安値到達時に条件価格で100株購入
+1. Positionなし
+   -> 始値で100株購入
 
-・利益確定
-    → 平均取得単価から3%上昇
-    → 高値到達時に条件価格で全株売却
+2. Averaging Down
+   -> 前回購入価格から6%下落
+   -> 条件価格で100株購入
 
-・資産評価
-    → 終値
+3. Profit Taking
+   -> 平均取得単価 +3%
+   -> 条件価格で全株売却
+
+4. Asset Evaluation
+   -> 終値評価
 
 """
 
@@ -32,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+
 from typing import List, Dict, Any
 
 
@@ -39,6 +41,7 @@ import pandas as pd
 
 
 from config import Config
+
 
 from portfolio import Portfolio
 
@@ -80,14 +83,16 @@ class TradeRecord:
 
 class TradeEngine:
     """
-    バックテスト実行エンジン
+    バックテストエンジン
     """
 
 
     def __init__(self):
 
         self.portfolio = Portfolio(
+
             initial_cash=Config.INITIAL_CASH
+
         )
 
 
@@ -100,6 +105,11 @@ class TradeEngine:
         self.data: pd.DataFrame | None = None
 
 
+        # ナンピン回数管理
+
+        self.average_down_count = 0
+
+
 
     # =================================================
     # CSV Load
@@ -110,10 +120,19 @@ class TradeEngine:
         """
         CSV読込
 
-        対応:
-        ・CP932
-        ・7201.csv
-        ・不要列除外
+        7201.csv対応
+
+        Encoding:
+        CP932
+
+        使用列:
+
+        日付
+        始値
+        高値
+        安値
+        終値
+
         """
 
 
@@ -126,26 +145,11 @@ class TradeEngine:
         )
 
 
-        required = [
-
-            Config.DATE_COLUMN,
-
-            Config.OPEN_COLUMN,
-
-            Config.HIGH_COLUMN,
-
-            Config.LOW_COLUMN,
-
-            Config.CLOSE_COLUMN
-
-        ]
-
-
         missing = [
 
             col
 
-            for col in required
+            for col in Config.REQUIRED_COLUMNS
 
             if col not in self.data.columns
 
@@ -163,7 +167,7 @@ class TradeEngine:
 
         self.data = self.data[
 
-            required
+            Config.REQUIRED_COLUMNS
 
         ].copy()
 
@@ -175,11 +179,7 @@ class TradeEngine:
 
         ] = pd.to_datetime(
 
-            self.data[
-
-                Config.DATE_COLUMN
-
-            ]
+            self.data[Config.DATE_COLUMN]
 
         )
 
@@ -194,7 +194,6 @@ class TradeEngine:
         )
 
 
-
         self.data.reset_index(
 
             drop=True,
@@ -206,24 +205,56 @@ class TradeEngine:
 
 
     # =================================================
+    # Data Validation
+    # =================================================
+
+
+    def validate_data(self) -> None:
+        """
+        CSVデータ検証
+        """
+
+
+        if self.data is None:
+
+            raise RuntimeError(
+
+                "CSV未読込です"
+
+            )
+
+
+
+        if len(self.data) == 0:
+
+            raise ValueError(
+
+                "CSVデータがありません"
+
+            )
+
+
+
+        if self.data.isnull().any().any():
+
+            raise ValueError(
+
+                "CSVに欠損値があります"
+
+            )
+
+    # =================================================
     # Trade History
     # =================================================
 
 
     def add_trade_history(
-
         self,
-
         date,
-
         action: str,
-
         price: float,
-
         shares: int,
-
         realized_profit: float = 0.0
-
     ) -> None:
         """
         売買履歴保存
@@ -243,30 +274,26 @@ class TradeEngine:
                 shares=int(shares),
 
                 cash=float(
-
                     self.portfolio.cash
-
                 ),
 
                 total_shares=int(
-
                     self.portfolio.total_shares
-
                 ),
 
                 average_price=float(
-
                     self.portfolio.average_price
-
                 ),
 
                 realized_profit=float(
-
                     realized_profit
-
                 )
 
             )
+
+        )
+
+
 
     # =================================================
     # Asset History
@@ -274,18 +301,12 @@ class TradeEngine:
 
 
     def add_asset_history(
-
         self,
-
         date,
-
         close_price: float
-
     ) -> None:
         """
-        資産履歴保存
-
-        終値評価
+        終値による資産評価
         """
 
 
@@ -303,17 +324,13 @@ class TradeEngine:
 
                 "MarketValue":
                     self.portfolio.market_value(
-
                         close_price
-
                     ),
 
 
                 "TotalAssets":
                     self.portfolio.total_assets(
-
                         close_price
-
                     )
 
             }
@@ -328,13 +345,9 @@ class TradeEngine:
 
 
     def execute_initial_buy(
-
         self,
-
         date,
-
         open_price: float
-
     ) -> None:
         """
         初回購入
@@ -349,11 +362,8 @@ class TradeEngine:
 
 
         if not self.portfolio.can_buy(
-
             open_price,
-
             shares
-
         ):
 
             return
@@ -367,6 +377,9 @@ class TradeEngine:
             shares
 
         )
+
+
+        self.average_down_count = 0
 
 
 
@@ -390,29 +403,35 @@ class TradeEngine:
 
 
     def execute_average_down(
-
         self,
-
-        date,
-
-        previous_price: float
-
+        date
     ) -> None:
         """
         ナンピン購入
 
-        条件:
-        直前購入価格から6%下落
+        前回購入価格から6%下落
 
-        約定:
-        条件価格
-
+        条件価格で購入
         """
+
+
+        if self.average_down_count >= Config.MAX_AVERAGE_DOWN_COUNT:
+
+            return
+
+
+
+        last_price = (
+
+            self.portfolio.last_buy_price
+
+        )
+
 
 
         buy_price = (
 
-            previous_price
+            last_price
 
             *
 
@@ -448,6 +467,10 @@ class TradeEngine:
 
 
 
+        self.average_down_count += 1
+
+
+
         self.add_trade_history(
 
             date=date,
@@ -463,34 +486,26 @@ class TradeEngine:
 
 
     # =================================================
-    # Profit Taking
+    # Profit Sell
     # =================================================
 
 
     def execute_profit_sell(
-
         self,
-
-        date,
-
-        average_price: float
-
+        date
     ) -> None:
         """
-        利益確定売却
+        利益確定
 
-        条件:
         平均取得単価 +3%
 
-        約定:
-        条件価格
-
+        条件価格で全株売却
         """
 
 
         sell_price = (
 
-            average_price
+            self.portfolio.average_price
 
             *
 
@@ -521,6 +536,9 @@ class TradeEngine:
         )
 
 
+        self.average_down_count = 0
+
+
 
         self.add_trade_history(
 
@@ -544,16 +562,13 @@ class TradeEngine:
 
 
     def check_average_down(
-
         self,
-
         low_price: float
-
     ) -> bool:
         """
         ナンピン判定
 
-        当日安値で判定
+        安値で判定
         """
 
 
@@ -563,14 +578,7 @@ class TradeEngine:
 
 
 
-        last_price = (
-
-            self.portfolio.last_buy_price
-
-        )
-
-
-        if last_price <= 0:
+        if self.average_down_count >= Config.MAX_AVERAGE_DOWN_COUNT:
 
             return False
 
@@ -578,14 +586,13 @@ class TradeEngine:
 
         limit_price = (
 
-            last_price
+            self.portfolio.last_buy_price
 
             *
 
             (1 - Config.AVERAGE_DOWN_RATE)
 
         )
-
 
 
         return (
@@ -597,16 +604,13 @@ class TradeEngine:
 
 
     def check_profit_target(
-
         self,
-
         high_price: float
-
     ) -> bool:
         """
         利益確定判定
 
-        当日高値で判定
+        高値で判定
         """
 
 
@@ -627,14 +631,14 @@ class TradeEngine:
         )
 
 
-
         return (
 
             high_price >= target_price
 
-        )  
-           # =================================================
-    # Backtest Execution
+        )
+
+    # =================================================
+    # Backtest Run
     # =================================================
 
 
@@ -642,7 +646,8 @@ class TradeEngine:
         """
         バックテスト実行
 
-        1日処理順:
+
+        1日の処理順:
 
         ① 始値購入
         ② ナンピン（安値）
@@ -718,11 +723,12 @@ class TradeEngine:
 
 
             # ---------------------------------
-            # ① 初回購入
+            # ① Position Check
             # ---------------------------------
 
 
             if not self.portfolio.has_position():
+
 
                 self.execute_initial_buy(
 
@@ -736,9 +742,9 @@ class TradeEngine:
             else:
 
 
-                # -----------------------------
-                # ② ナンピン判定
-                # -----------------------------
+                # ---------------------------------
+                # ② Averaging Down
+                # ---------------------------------
 
 
                 if self.check_average_down(
@@ -750,17 +756,15 @@ class TradeEngine:
 
                     self.execute_average_down(
 
-                        date,
-
-                        self.portfolio.last_buy_price
+                        date
 
                     )
 
 
 
-                # -----------------------------
-                # ③ 利益確定判定
-                # -----------------------------
+                # ---------------------------------
+                # ③ Profit Taking
+                # ---------------------------------
 
 
                 if self.check_profit_target(
@@ -772,16 +776,14 @@ class TradeEngine:
 
                     self.execute_profit_sell(
 
-                        date,
-
-                        self.portfolio.average_price
+                        date
 
                     )
 
 
 
             # ---------------------------------
-            # ④ 終値評価
+            # ④ Asset Evaluation
             # ---------------------------------
 
 
@@ -796,14 +798,12 @@ class TradeEngine:
 
 
     # =================================================
-    # Output
+    # Data Output
     # =================================================
 
 
     def get_trade_history_df(
-
         self
-
     ) -> pd.DataFrame:
         """
         売買履歴DataFrame
@@ -833,9 +833,7 @@ class TradeEngine:
 
 
     def get_asset_history_df(
-
         self
-
     ) -> pd.DataFrame:
         """
         資産推移DataFrame
@@ -857,7 +855,7 @@ class TradeEngine:
 
     def summary(self) -> dict:
         """
-        バックテスト結果
+        バックテスト概要
         """
 
 
@@ -885,17 +883,17 @@ class TradeEngine:
         return {
 
 
-            "InitialCash":
+            "Initial Assets":
 
                 Config.INITIAL_CASH,
 
 
-            "FinalAssets":
+            "Final Assets":
 
                 final_assets,
 
 
-            "Profit":
+            "Total Profit":
 
                 final_assets
 
@@ -904,7 +902,7 @@ class TradeEngine:
                 Config.INITIAL_CASH,
 
 
-            "ReturnRate":
+            "Return Rate":
 
                 (
 
@@ -921,7 +919,7 @@ class TradeEngine:
                 ),
 
 
-            "TradeCount":
+            "Trade Count":
 
                 len(
 
@@ -929,6 +927,4 @@ class TradeEngine:
 
                 )
 
-        } 
-
-        )
+        }
