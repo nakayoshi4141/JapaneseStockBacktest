@@ -1,7 +1,7 @@
 """
 Japanese Stock Backtest
 
-Version : 1.0.0 Release
+Version : 1.0.0 Final
 
 config.py
 
@@ -13,6 +13,10 @@ Target:
 """
 
 
+from pathlib import Path
+
+
+
 class Config:
     """
     Backtest Configuration
@@ -20,21 +24,25 @@ class Config:
 
 
     # =================================================
-    # File
+    # File Settings
     # =================================================
+
 
     CSV_FILE = (
         "sample_data/7201.csv"
     )
+
 
     OUTPUT_DIR = (
         "output"
     )
 
 
+
     # =================================================
-    # Capital
+    # Capital Settings
     # =================================================
+
 
     # 初期資金
 
@@ -43,15 +51,18 @@ class Config:
     )
 
 
+
     # =================================================
-    # Trading Rule
+    # Trading Rules
     # =================================================
+
 
     # 初回購入株数
 
     INITIAL_SHARES = (
         100
     )
+
 
 
     # ナンピン最大回数
@@ -61,13 +72,15 @@ class Config:
     )
 
 
+
     # ナンピン条件
 
-    # 前回購入価格から6%下落
+    # 直前購入価格から6%下落
 
     AVERAGE_DOWN_RATE = (
         0.06
     )
+
 
 
     # 利益確定条件
@@ -79,9 +92,11 @@ class Config:
     )
 
 
+
     # =================================================
-    # CSV Column
+    # CSV Column Settings
     # =================================================
+
 
     DATE_COLUMN = (
         "日付"
@@ -108,17 +123,6 @@ class Config:
     )
 
 
-    # 内部処理用価格列
-    #
-    # 終値ではなく用途別に利用するため
-    # trade_engine.pyでは直接参照する
-
-    PRICE_COLUMN = (
-        "終値"
-    )
-
-
-    # 必須列
 
     REQUIRED_COLUMNS = [
 
@@ -135,9 +139,11 @@ class Config:
     ]
 
 
+
     # =================================================
-    # Output
+    # Output Files
     # =================================================
+
 
     TRADE_HISTORY_FILE = (
         "trade_history.xlsx"
@@ -154,8 +160,31 @@ class Config:
     )
 
 
+
     # =================================================
     # Debug
     # =================================================
 
+
     DEBUG = True
+
+
+
+    # =================================================
+    # Utility
+    # =================================================
+
+
+    @classmethod
+    def create_output_directory(cls):
+        """
+        出力フォルダ作成
+        """
+
+        Path(
+            cls.OUTPUT_DIR
+        ).mkdir(
+
+            exist_ok=True
+
+        )
