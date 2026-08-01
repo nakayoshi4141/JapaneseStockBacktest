@@ -63,14 +63,14 @@ class Portfolio:
 
         return self.total_shares > 0
 
-
     @property
-    def market_value(self) -> float:
+    def book_value(self) -> float:
         """
-        現在の簿価
+        簿価（取得原価）
         """
 
         return self.total_cost
+   
 
 
     @property
@@ -108,19 +108,7 @@ class Portfolio:
         return self.cash
 
 
-    @property
-    def total_assets(self) -> float:
-        """
-        現時点の総資産（簿価ベース）
-
-        評価額は trade_engine.py 側で
-        当日価格を使って計算する。
-        """
-
-        return (
-            self.cash
-            + self.total_cost
-        )
+ 
     # ==========================================
     # Trading Methods
     # ==========================================
@@ -236,10 +224,12 @@ class Portfolio:
         self.last_buy_price = 0.0
         self.average_down_count = 0
 
-        return profit
-            # ==========================================
-    # Evaluation Methods
+         return profit
+
+
     # ==========================================
+    # Evaluation Methods
+    # ==========================================   
 
     def current_market_value(
         self,
