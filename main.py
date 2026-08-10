@@ -1,12 +1,4 @@
-"""
-Japanese Stock Backtest
-Version : 1.0.0
-
-main.py
-
-バックテスト実行メイン
-"""
-
+"""Japanese Stock Backtest - Version 1.0.1 entry point."""
 from __future__ import annotations
 
 from config import Config
@@ -16,155 +8,50 @@ from excel_writer import ExcelWriter
 from chart import EquityChart
 
 
-def run_backtest() -> None:
-    """
-    バックテスト実行
-    """
-
-    print("=" * 50)
-    print("Japanese Stock Backtest")
-    print("Version 1.0.0")
-    print("=" * 50)
-
-
-    # --------------------------------------------------
-    # Output directory
-    # --------------------------------------------------
-
+def run_backtest() -> dict[str, object]:
+    Config.validate()
     Config.create_output_directory()
-
-
-    # --------------------------------------------------
-    # Backtest Engine
-    # --------------------------------------------------
+    print("=" * 60)
+    print(f"Japanese Stock Backtest Version {Config.VERSION}")
+    print("=" * 60)
 
     engine = TradeEngine()
-
-
     print("Loading CSV...")
-
     engine.load_csv()
-
     engine.validate_data()
-
-
+    print(f"Rows: {len(engine.data):,}")
     print("Running backtest...")
-
     engine.run()
 
-
-    # --------------------------------------------------
-    # Data
-    # --------------------------------------------------
-
-    trade_history = (
-        engine.get_trade_history_df()
-    )
-
-    asset_history = (
-        engine.get_asset_history_df()
-    )
-
-
-    # --------------------------------------------------
-    # Statistics
-    # --------------------------------------------------
-
-    statistics = BacktestStatistics(
-        asset_history=asset_history,
-        trade_history=trade_history
-    )
-
-
-    summary = (
-        statistics.summary_dataframe()
-    )
-
-
-    yearly_result = (
-        statistics.yearly_profit()
-    )
-
-
-    # --------------------------------------------------
-    # Excel
-    # --------------------------------------------------
-
-    print("Creating Excel...")
+    trade_history = engine.get_trade_history_df()
+    asset_history = engine.get_asset_history_df()
+    stats = BacktestStatistics(asset_history, trade_history)
+    summary = stats.summary_dataframe()
+    yearly = stats.yearly_profit()
 
     writer = ExcelWriter()
+    excel_file = writer.export(trade_history, asset_history, summary, yearly)
+    trade_csv = writer.export_trade_history_csv(trade_history)
+    chart_file = EquityChart().export(asset_history)
 
-    excel_file = writer.export(
-        trade_history=trade_history,
-        asset_history=asset_history,
-        statistics=summary,
-        yearly_result=yearly_result
-    )
-
-
-    # --------------------------------------------------
-    # Chart
-    # --------------------------------------------------
-
-    print("Creating chart...")
-
-    chart = EquityChart()
-
-    chart_file = chart.export(
-        asset_history
-    )
-
-
-    # --------------------------------------------------
-    # Result
-    # --------------------------------------------------
-
-    result = (
-        statistics.summary()
-    )
-
-
-    print("")
-    print("=" * 50)
+    result = stats.summary()
+    print("=" * 60)
     print("Backtest Completed")
-    print("=" * 50)
-
-    print(
-        f"Initial Assets : "
-        f"{result['Initial Assets']:,.0f} JPY"
-    )
-
-    print(
-        f"Final Assets   : "
-        f"{result['Final Assets']:,.0f} JPY"
-    )
-
-    print(
-        f"Profit         : "
-        f"{result['Total Profit']:,.0f} JPY"
-    )
-
-    print(
-        f"Return Rate    : "
-        f"{result['Return Rate']:.2%}"
-    )
-
-    print(
-        f"Trade Count    : "
-        f"{result['Trade Count']}"
-    )
-
-    print("")
+    print("=" * 60)
+    print(f"Initial Assets : {result['Initial Assets']:,.0f} JPY")
+    print(f"Final Assets   : {result['Final Assets']:,.0f} JPY")
+    print(f"Total Profit   : {result['Total Profit']:,.0f} JPY")
+    print(f"Return Rate    : {result['Return Rate']:.2%}")
+    print(f"Sell Count     : {result['Sell Count']}")
+    print(f"Win Rate       : {result['Win Rate']:.2%}")
+    print(f"Max Drawdown   : {result['Max Drawdown']:.2%}")
+    print(f"CAGR           : {result['CAGR']:.2%}")
     print("Output Files")
-    print(
-        excel_file
-    )
-
-    print(
-        chart_file
-    )
+    print(excel_file)
+    print(trade_csv)
+    print(chart_file)
+    return {"summary": result, "excel": excel_file, "trade_csv": trade_csv, "chart": chart_file}
 
 
 if __name__ == "__main__":
-
     run_backtest()

@@ -1,831 +1,178 @@
-"""
-Japanese Stock Backtest
-
-Version : 1.0.0 Final
-
-trade_engine.py
-
-バックテスト実行エンジン
-
-"""
-
-
+"""Japanese Stock Backtest - Version 1.0.1 trade engine."""
 from __future__ import annotations
 
-
-from dataclasses import dataclass
-
-
-from typing import List, Dict, Any
-
-
+from dataclasses import asdict, dataclass
 from pathlib import Path
-
+from typing import Any
 
 import pandas as pd
 
-
-
 from config import Config
-
-
 from portfolio import Portfolio
 
 
-
-
-# =====================================================
-# Trade Record
-# =====================================================
-
-
-@dataclass
+@dataclass(frozen=True)
 class TradeRecord:
-    """
-    売買履歴
-    """
-
-
     date: str
-
     action: str
-
     price: float
-
     shares: int
-
     cash: float
-
     total_shares: int
-
     average_price: float
-
     realized_profit: float
 
 
-
-
-# =====================================================
-# Trade Engine
-# =====================================================
-
-
 class TradeEngine:
-    """
-    バックテストエンジン
-    """
+    """Loads price data and executes the fixed backtest rules."""
 
-
-
-    def __init__(self):
-
-
-        self.portfolio = Portfolio(
-
-            initial_cash=Config.INITIAL_CASH
-
-        )
-
-
-
-        self.trade_history: List[TradeRecord] = []
-
-
-
-        self.asset_history: List[Dict[str, Any]] = []
-
-
-
+    def __init__(self, portfolio: Portfolio | None = None) -> None:
+        Config.validate()
+        self.portfolio = portfolio or Portfolio()
+        self.trade_history: list[TradeRecord] = []
+        self.asset_history: list[dict[str, Any]] = []
         self.data: pd.DataFrame | None = None
 
+    def _debug(self, message: str) -> None:
+        if Config.DEBUG:
+            print(message)
 
-
-  
-    # =================================================
-    # CSV Load
-    # =================================================
-
-
-    def load_csv(self) -> None:
-        """
-        CSV読込
-
-        UTF-8 / UTF-8-SIG / CP932対応
-        """
-
-        encodings = [
-            "utf-8-sig",
-            "utf-8",
-            "cp932"
-        ]
-
-
-        last_error = None
-
-
-        for encoding in encodings:
-
+    def load_csv(self, csv_file: str | Path | None = None) -> pd.DataFrame:
+        path = Path(csv_file) if csv_file is not None else Path(Config.CSV_FILE)
+        if not path.exists():
+            raise FileNotFoundError(f"CSV file not found: {path}")
+        last_error: Exception | None = None
+        for encoding in Config.CSV_ENCODINGS:
             try:
-
-                self.data = pd.read_csv(
-                    Config.CSV_FILE,
-                    encoding=encoding
-                )
-
+                df = pd.read_csv(path, encoding=encoding)
+                last_error = None
                 break
-
-
-            except UnicodeDecodeError as e:
-
-                last_error = e
-
-        else:
-
-            raise last_error
-
-
-
-        # ---------------------------------------------
-        # 必須列確認
-        # ---------------------------------------------
-
-
-        missing = [
-
-            col
-
-            for col in Config.REQUIRED_COLUMNS
-
-            if col not in self.data.columns
-
-        ]
-
-
+            except UnicodeDecodeError as exc:
+                last_error = exc
+        if last_error is not None:
+            raise UnicodeError(f"Unable to decode CSV: {path}") from last_error
+        missing = [c for c in Config.REQUIRED_COLUMNS if c not in df.columns]
         if missing:
-
-            raise ValueError(
-                f"CSV必要列不足 : {missing}"
-            )
-
-
-
-        # 必要列のみ利用
-
-        self.data = self.data[
-            Config.REQUIRED_COLUMNS
-        ].copy()
-
-
-
-        # ---------------------------------------------
-        # 日付変換
-        # ---------------------------------------------
-
-
-        self.data[
-            Config.DATE_COLUMN
-        ] = pd.to_datetime(
-
-            self.data[
-                Config.DATE_COLUMN
-            ]
-
-        )
-
-
-
-        # ---------------------------------------------
-        # 数値変換
-        # ---------------------------------------------
-
-
-        numeric_columns = [
-
-            Config.OPEN_COLUMN,
-
-            Config.CLOSE_COLUMN,
-
-            Config.HIGH_COLUMN,
-
-            Config.LOW_COLUMN
-
-        ]
-
-
-        for col in numeric_columns:
-
-            self.data[col] = pd.to_numeric(
-
-                self.data[col],
-
-                errors="coerce"
-
-            )
-
-
-
-        # 欠損除去
-
-        self.data.dropna(
-
-            inplace=True
-
-        )
-
-
-
-        # ---------------------------------------------
-        # 日付順へ変更
-        # ---------------------------------------------
-
-
-        self.data.sort_values(
-
-            Config.DATE_COLUMN,
-
-            inplace=True
-
-        )
-
-
-        self.data.reset_index(
-
-            drop=True,
-
-            inplace=True
-
-        )
-
-
-
-    # =================================================
-    # Data Validation
-    # =================================================
-
+            raise ValueError(f"CSV required columns are missing: {missing}")
+        df = df.loc[:, list(Config.REQUIRED_COLUMNS)].copy()
+        df[Config.DATE_COLUMN] = pd.to_datetime(df[Config.DATE_COLUMN], errors="coerce")
+        for column in (Config.OPEN_COLUMN, Config.HIGH_COLUMN, Config.LOW_COLUMN, Config.CLOSE_COLUMN):
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+        if df.empty:
+            raise ValueError("CSV data is empty.")
+        if df.isna().any().any():
+            df = df.dropna().copy()
+        if df.empty:
+            raise ValueError("CSV contains no valid rows after data cleaning.")
+        if (df[[Config.OPEN_COLUMN, Config.HIGH_COLUMN, Config.LOW_COLUMN, Config.CLOSE_COLUMN]] <= 0).any().any():
+            raise ValueError("Price data must be greater than zero.")
+        df = df.sort_values(Config.DATE_COLUMN).drop_duplicates(Config.DATE_COLUMN, keep="last").reset_index(drop=True)
+        self.data = df
+        return df
 
     def validate_data(self) -> None:
-        """
-        データ検証
-        """
-
-
-
         if self.data is None:
-
-
-            raise ValueError(
-
-                "CSVが読み込まれていません"
-
-            )
-
-
-
+            raise ValueError("CSV data has not been loaded.")
         if self.data.empty:
-
-
-            raise ValueError(
-
-                "CSVデータが空です"
-
-            )
-
-
-
-        required = [
-
-            Config.DATE_COLUMN,
-
-            Config.OPEN_COLUMN,
-
-            Config.CLOSE_COLUMN,
-
-            Config.HIGH_COLUMN,
-
-            Config.LOW_COLUMN
-
-        ]
-
-
-
-        missing = [
-
-            col
-
-            for col in required
-
-            if col not in self.data.columns
-
-        ]
-
-
-
+            raise ValueError("CSV data is empty.")
+        missing = [c for c in Config.REQUIRED_COLUMNS if c not in self.data.columns]
         if missing:
+            raise ValueError(f"CSV required columns are missing: {missing}")
 
+    def _record_trade(self, date: pd.Timestamp, action: str, price: float, shares: int, profit: float = 0.0) -> None:
+        self.trade_history.append(TradeRecord(
+            date=date.strftime("%Y-%m-%d"), action=action, price=float(price), shares=int(shares),
+            cash=float(self.portfolio.cash), total_shares=int(self.portfolio.total_shares),
+            average_price=float(self.portfolio.average_price), realized_profit=float(profit)
+        ))
 
-            raise ValueError(
+    def _record_assets(self, date: pd.Timestamp, close_price: float) -> None:
+        self.asset_history.append({
+            "Date": date.strftime("%Y-%m-%d"),
+            "Close": float(close_price),
+            "Cash": float(self.portfolio.cash),
+            "MarketValue": float(self.portfolio.market_value(close_price)),
+            "TotalAssets": float(self.portfolio.total_asset(close_price)),
+            "Shares": int(self.portfolio.total_shares),
+            "AveragePrice": float(self.portfolio.average_price),
+        })
 
-                f"不足列 : {missing}"
-
-            )
-
-    # =================================================
-    # History
-    # =================================================
-
-
-    def add_trade_history(
-        self,
-        date,
-        action: str,
-        price: float,
-        shares: int,
-        realized_profit: float = 0.0
-    ) -> None:
-        """
-        売買履歴追加
-        """
-
-
-        self.trade_history.append(
-
-            TradeRecord(
-
-                date=str(date.date()),
-
-                action=action,
-
-                price=float(price),
-
-                shares=int(shares),
-
-                cash=float(
-                    self.portfolio.cash
-                ),
-
-                total_shares=int(
-                    self.portfolio.total_shares
-                ),
-
-                average_price=float(
-                    self.portfolio.average_price
-                ),
-
-                realized_profit=float(
-                    realized_profit
-                )
-
-            )
-
-        )
-
-
-
-    def add_asset_history(
-        self,
-        date,
-        close_price: float
-    ) -> None:
-        """
-        資産推移追加
-        """
-
-
-        self.asset_history.append(
-
-            {
-
-                "Date":
-                    str(date.date()),
-
-                "Cash":
-                    self.portfolio.cash,
-
-                "MarketValue":
-                    self.portfolio.market_value(
-                        close_price
-                    ),
-
-                "TotalAssets":
-                    self.portfolio.total_assets(
-                        close_price
-                    )
-
-            }
-
-        )
-
-
-
-    # =================================================
-    # Trading
-    # =================================================
-
-
-    def execute_buy(
-        self,
-        date,
-        price: float,
-        action: str = "BUY"
-    ) -> None:
-        """
-        買付実行
-        """
-
-
+    def execute_buy(self, date: pd.Timestamp, price: float, action: str = "BUY") -> bool:
         shares = Config.INITIAL_SHARES
-
-
-
-        if not self.portfolio.can_buy(
-            price,
-            shares
-        ):
-
-            return
-
-
-
-        self.portfolio.buy(
-
-            price,
-
-            shares
-
-        )
-
-
-
-        self.add_trade_history(
-
-            date=date,
-
-            action=action,
-
-            price=price,
-
-            shares=shares
-
-        )
-
-
-
-
-    def execute_sell(
-        self,
-        date,
-        price: float
-    ) -> None:
-        """
-        全株売却
-        """
-
-
-        shares = (
-
-            self.portfolio.total_shares
-
-        )
-
-
-        if shares <= 0:
-
-            return
-
-
-
-        realized_profit = (
-
-            self.portfolio.sell_all(
-
-                price
-
-            )
-
-        )
-
-
-
-        self.add_trade_history(
-
-            date=date,
-
-            action="SELL",
-
-            price=price,
-
-            shares=shares,
-
-            realized_profit=realized_profit
-
-        )
-
-
-
-    # =================================================
-    # Entry Rule
-    # =================================================
-
-
-    def check_initial_entry(
-        self,
-        row
-    ) -> None:
-        """
-        初回購入判定
-
-        ポジションなしの場合
-        始値購入
-        """
-
-
-
-        if self.portfolio.has_position():
-
-            return
-
-
-
-        self.execute_buy(
-
-            date=row[Config.DATE_COLUMN],
-
-            price=row[Config.OPEN_COLUMN],
-
-            action="BUY"
-
-        )
-
-
-
-    # =================================================
-    # Take Profit Rule
-    # =================================================
-
-
-    def check_take_profit(
-        self,
-        row
-    ) -> bool:
-        """
-        利確判定
-
-        高値が平均簿価+3%以上
-        """
-
-
-        if not self.portfolio.has_position():
-
+        if not self.portfolio.can_buy(price, shares):
+            self._debug(f"[BUY SKIPPED] {date.date()} price={price:.2f} cash={self.portfolio.cash:.2f}")
             return False
+        try:
+            self.portfolio.buy(price, shares)
+        except ValueError as exc:
+            self._debug(f"[BUY SKIPPED] {date.date()} {exc}")
+            return False
+        self._record_trade(date, action, price, shares)
+        self._debug(f"[{action}] {date.date()} price={price:.2f} shares={shares}")
+        return True
 
+    def execute_sell(self, date: pd.Timestamp, price: float) -> bool:
+        if not self.portfolio.has_position:
+            return False
+        shares = self.portfolio.total_shares
+        try:
+            profit = self.portfolio.sell_all(price)
+        except ValueError as exc:
+            self._debug(f"[SELL SKIPPED] {date.date()} {exc}")
+            return False
+        self._record_trade(date, "SELL", price, shares, profit)
+        self._debug(f"[SELL] {date.date()} price={price:.2f} shares={shares} profit={profit:.2f}")
+        return True
 
+    def check_initial_entry(self, row: pd.Series) -> bool:
+        if self.portfolio.has_position:
+            return False
+        return self.execute_buy(row[Config.DATE_COLUMN], float(row[Config.OPEN_COLUMN]), "BUY")
 
-        target_price = (
-
-            self.portfolio.average_price
-
-            *
-
-            (
-
-                1
-
-                +
-
-                Config.PROFIT_TARGET
-
-            )
-
-        )
-
-
-
-        if row[Config.HIGH_COLUMN] >= target_price:
-
-
-            self.execute_sell(
-
-                date=row[Config.DATE_COLUMN],
-
-                price=target_price
-
-            )
-
-
-            return True
-
-
-
+    def check_take_profit(self, row: pd.Series) -> bool:
+        if not self.portfolio.has_position:
+            return False
+        target = self.portfolio.average_price * (1.0 + Config.PROFIT_TARGET)
+        if float(row[Config.HIGH_COLUMN]) >= target:
+            return self.execute_sell(row[Config.DATE_COLUMN], target)
         return False
 
-
-
-    # =================================================
-    # Averaging Down Rule
-    # =================================================
-
-
-    def check_average_down(
-        self,
-        row
-    ) -> bool:
-        """
-        ナンピン判定
-
-        直前購入価格から6%下落
-        """
-
-
-        if not self.portfolio.has_position():
-
+    def check_average_down(self, row: pd.Series) -> bool:
+        if not self.portfolio.has_position or self.portfolio.buy_count >= Config.MAX_BUY_COUNT:
             return False
-
-
-
-        if self.portfolio.buy_count >= Config.MAX_BUY_COUNT:
-
-            return False
-
-
-
-        target_price = (
-
-            self.portfolio.last_buy_price
-
-            *
-
-            (
-
-                1
-
-                -
-
-                Config.AVERAGING_RATE
-
-            )
-
-        )
-
-
-
-        if row[Config.LOW_COLUMN] <= target_price:
-
-
-            self.execute_buy(
-
-                date=row[Config.DATE_COLUMN],
-
-                price=target_price,
-
-                action="AVERAGE_DOWN"
-
-            )
-
-
-            return True
-
-
-
+        target = self.portfolio.last_buy_price * (1.0 - Config.AVERAGING_RATE)
+        if float(row[Config.LOW_COLUMN]) <= target:
+            return self.execute_buy(row[Config.DATE_COLUMN], target, "AVERAGE_DOWN")
         return False
 
-    # =================================================
-    # Backtest Run
-    # =================================================
-
-
-    def run(self) -> None:
-        """
-        バックテスト実行
-        """
-
-
-        if self.data is None:
-
-            raise ValueError(
-                "CSVデータがありません"
-            )
-
-
-
+    def run(self) -> pd.DataFrame:
+        self.validate_data()
+        self.trade_history.clear()
+        self.asset_history.clear()
         for _, row in self.data.iterrows():
-
-
             date = row[Config.DATE_COLUMN]
-
-
-            # -----------------------------------------
-            # 保有中
-            # -----------------------------------------
-
-            if self.portfolio.has_position():
-
-
-                # ① 利確確認
-
-                sold = self.check_take_profit(
-                    row
-                )
-
-
-                if sold:
-
-                    self.add_asset_history(
-
-                        date,
-
-                        row[Config.CLOSE_COLUMN]
-
-                    )
-
-                    continue
-
-
-
-                # ② ナンピン確認
-
-                self.check_average_down(
-                    row
-                )
-
-
-
-            # -----------------------------------------
-            # ポジションなし
-            # -----------------------------------------
-
+            if self.portfolio.has_position:
+                sold = self.check_take_profit(row)
+                if not sold:
+                    self.check_average_down(row)
             else:
+                self.check_initial_entry(row)
+                # The initial purchase occurs at the day's open. Because the
+                # strategy defines take-profit using intraday prices, the
+                # same day's high must also be evaluated after that purchase.
+                if self.portfolio.has_position:
+                    self.check_take_profit(row)
+            self._record_assets(date, float(row[Config.CLOSE_COLUMN]))
+        return self.get_asset_history_df()
 
-
-                self.check_initial_entry(
-                    row
-                )
-
-
-
-            # -----------------------------------------
-            # 日次資産記録
-            # -----------------------------------------
-
-
-            self.add_asset_history(
-
-                date,
-
-                row[Config.CLOSE_COLUMN]
-
-            )
-
-
-
-    # =================================================
-    # DataFrame Convert
-    # =================================================
-
-
-    def get_trade_history_df(
-        self
-    ) -> pd.DataFrame:
-        """
-        売買履歴DataFrame
-        """
-
-
+    def get_trade_history_df(self) -> pd.DataFrame:
+        columns = list(TradeRecord.__annotations__.keys())
         if not self.trade_history:
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame([asdict(record) for record in self.trade_history])
 
-            return pd.DataFrame()
-
-
-
-        return pd.DataFrame(
-
-            [
-
-                record.__dict__
-
-                for record in self.trade_history
-
-            ]
-
-        )
-
-
-
-    def get_asset_history_df(
-        self
-    ) -> pd.DataFrame:
-        """
-        資産履歴DataFrame
-        """
-
-
+    def get_asset_history_df(self) -> pd.DataFrame:
+        columns = ["Date", "Close", "Cash", "MarketValue", "TotalAssets", "Shares", "AveragePrice"]
         if not self.asset_history:
-
-            return pd.DataFrame()
-
-
-
-        return pd.DataFrame(
-
-            self.asset_history
-
-        )
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame(self.asset_history, columns=columns)
