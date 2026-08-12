@@ -147,6 +147,7 @@ class TradeEngine:
 
     def run(self) -> pd.DataFrame:
         self.validate_data()
+       self.portfolio.reset()
         self.trade_history.clear()
         self.asset_history.clear()
         for _, row in self.data.iterrows():
